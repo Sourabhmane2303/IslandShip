@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Island Capture — Naval Battle</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#060e1c;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;padding:24px 12px;font-family:system-ui,sans-serif}
+#wrap{width:680px;background:#0a1628;padding:12px;border-radius:14px;border:1px solid #1a4a7a}
+h1{font-size:17px;font-weight:600;color:#80cfff;text-align:center;letter-spacing:2px;margin-bottom:12px;text-transform:uppercase}
+#hud{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.hud-box{background:#0d2040;border:0.5px solid #1a4a7a;border-radius:8px;padding:8px 10px;text-align:center}
+.hud-box .lbl{font-size:11px;color:#4a8aaa;letter-spacing:1px;text-transform:uppercase;display:block}
+.hud-box .val{font-size:18px;font-weight:600;color:#80cfff}
+#canvas-wrap{position:relative;border:1.5px solid #1a4a7a;border-radius:10px;overflow:hidden;background:#0d2a4a;cursor:crosshair}
+canvas{display:block}
+#log-bar{background:#0d2040;border:0.5px solid #1a4a7a;border-radius:8px;padding:7px 12px;margin-top:8px;font-size:12px;color:#4a8aaa;min-height:32px}
+#log-bar span{color:#80cfff}
+#btn-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.btn{padding:8px 18px;border:0.5px solid #1a6aaa;border-radius:8px;background:#0d2040;color:#80cfff;font-size:12px;font-weight:500;cursor:pointer;transition:background .15s,transform .1s;letter-spacing:.5px}
+.btn:hover{background:#1a4a7a;transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn.fire{border-color:#c05050;color:#ffaaaa}
+.btn.fire:hover{background:#3a1010}
+.mode-lbl{font-size:12px;color:#4a8aaa;margin-left:4px}
+#legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:#4a8aaa}
+.leg-item{display:flex;align-items:center;gap:5px}
+.leg-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+#instructions{margin-top:10px;background:#0d2040;border:0.5px solid #1a4a7a;border-radius:8px;padding:10px 14px;font-size:11px;color:#4a8aaa;line-height:1.8}
+#instructions b{color:#80cfff}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>&#9875; Island Capture</h1>
+  <div id="hud">
+    <div class="hud-box"><span class="lbl">Islands</span><span class="val" id="h-islands">0 / 6</span></div>
+    <div class="hud-box"><span class="lbl">Ships sunk</span><span class="val" id="h-sunk">0</span></div>
+    <div class="hud-box"><span class="lbl">Cannonballs</span><span class="val" id="h-ammo">20</span></div>
+    <div class="hud-box"><span class="lbl">HP</span><span class="val" id="h-hp">5</span></div>
+  </div>
+  <div id="canvas-wrap"><canvas id="gc" width="656" height="440"></canvas></div>
+  <div id="log-bar">Click the sea to sail. <span id="log-msg">Capture all 6 islands to win!</span></div>
+  <div id="btn-row">
+    <button class="btn fire" onclick="fireMode()">Fire Cannon [F]</button>
+    <button class="btn" onclick="restartGame()">New Game</button>
+    <span class="mode-lbl" id="mode-lbl">Mode: Sail (click to move)</span>
+  </div>
+  <div id="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#4a9a4a"></div>Your ship</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#c05050"></div>Enemy ship</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#d4a44a"></div>Neutral island</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#4a8aff"></div>Captured island</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#ff6a3a"></div>Enemy island</div>
+  </div>
+  <div id="instructions">
+    <b>Sail:</b> Click the sea to move your ship &nbsp;|&nbsp; <b>Capture:</b> Sail close to any island &nbsp;|&nbsp;
+    <b>Fire:</b> Press F or click "Fire Cannon", then click to shoot &nbsp;|&nbsp; <b>Win:</b> Capture all 6 islands
+  </div>
+</div>
+
+<script>
+const cv = document.getElementById('gc');
+const ctx = cv.getContext('2d');
+const W = 656, H = 440;
+
+let mode = 'sail';
+let game = {};
+
+function rnd(a,b){return Math.floor(Math.random()*(b-a+1))+a;}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function initGame(){
+  mode = 'sail';
+  document.getElementById('mode-lbl').textContent = 'Mode: Sail (click to move)';
+
+  const ISLAND_DEFS = [
+    {x:100,y:80,r:28},{x:300,y:60,r:22},{x:540,y:100,r:30},
+    {x:80,y:330,r:25},{x:380,y:370,r:32},{x:580,y:300,r:24}
+  ];
+
+  game = {
+    player:{x:330,y:220,angle:0,hp:5,ammo:20,moving:false,tx:330,ty:220,speed:2.5},
+    islands:ISLAND_DEFS.map((d,i)=>({...d,owner:i===2?'enemy':'neutral',name:'Isle '+(i+1)})),
+    enemies:[
+      {x:520,y:90,angle:Math.PI,hp:3,alive:true,speed:1.0,patrol:[{x:520,y:90},{x:480,y:160},{x:560,y:160}],pi:0,pt:0},
+      {x:90,y:340,angle:0,hp:3,alive:true,speed:0.9,patrol:[{x:90,y:340},{x:160,y:300},{x:100,y:260}],pi:0,pt:0},
+      {x:370,y:370,angle:-Math.PI/2,hp:3,alive:true,speed:1.1,patrol:[{x:370,y:370},{x:450,y:320},{x:430,y:390}],pi:0,pt:0},
+    ],
+    bullets:[],ebullets:[],particles:[],sunk:0,captured:0,over:false,overMsg:'',tick:0,efire:0,
+  };
+
+  updateHUD();
+  log('Set sail! Capture all 6 islands.');
+}
+
+function updateHUD(){
+  const g=game;
+  const cap=g.islands.filter(i=>i.owner==='player').length;
+  document.getElementById('h-islands').textContent=cap+' / '+g.islands.length;
+  document.getElementById('h-sunk').textContent=g.sunk;
+  document.getElementById('h-ammo').textContent=g.player.ammo;
+  document.getElementById('h-hp').textContent=Math.max(0,g.player.hp);
+}
+
+function log(msg){document.getElementById('log-msg').textContent=msg;}
+
+function fireMode(){
+  if(game.over)return;
+  mode=mode==='fire'?'sail':'fire';
+  document.getElementById('mode-lbl').textContent=mode==='fire'?'Mode: Fire (click to shoot)':'Mode: Sail (click to move)';
+}
+
+document.addEventListener('keydown',e=>{if(e.key==='f'||e.key==='F')fireMode();});
+
+cv.addEventListener('click',e=>{
+  if(game.over)return;
+  const rect=cv.getBoundingClientRect();
+  const mx=(e.clientX-rect.left)*(W/rect.width);
+  const my=(e.clientY-rect.top)*(H/rect.height);
+  if(mode==='sail'){game.player.tx=mx;game.player.ty=my;game.player.moving=true;}
+  else shootAt(mx,my);
+});
+
+function shootAt(tx,ty){
+  const p=game.player;
+  if(p.ammo<=0){log('Out of cannonballs!');return;}
+  p.ammo--;
+  const ang=Math.atan2(ty-p.y,tx-p.x);
+  game.bullets.push({x:p.x,y:p.y,vx:Math.cos(ang)*7,vy:Math.sin(ang)*7,life:80});
+  spawnParticles(p.x,p.y,'#ffcc44',5);
+  updateHUD();
+}
+
+function spawnParticles(x,y,color,n){
+  for(let i=0;i<n;i++){
+    const ang=Math.random()*Math.PI*2,spd=Math.random()*2+1;
+    game.particles.push({x,y,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,life:20,color});
+  }
+}
+
+function checkCapture(){
+  const p=game.player;
+  game.islands.forEach(isl=>{
+    if(isl.owner!=='player'&&dist(p,isl)<isl.r+14){
+      log((isl.owner==='enemy'?'Captured enemy island: ':'Captured: ')+isl.name+'!');
+      isl.owner='player';game.captured++;
+      spawnParticles(isl.x,isl.y,'#4a8aff',12);
+      updateHUD();
+      if(game.islands.every(i=>i.owner==='player')){game.over=true;game.overMsg='VICTORY! All islands captured!';}
+    }
+  });
+}
+
+function enemyAI(en){
+  if(!en.alive)return;
+  const pt=en.patrol[en.pi];
+  const d=dist(en,pt);
+  if(d<4){en.pi=(en.pi+1)%en.patrol.length;}
+  else{
+    const ang=Math.atan2(pt.y-en.y,pt.x-en.x);
+    en.x+=Math.cos(ang)*en.speed;en.y+=Math.sin(ang)*en.speed;en.angle=ang;
+  }
+  en.x=Math.max(16,Math.min(W-16,en.x));en.y=Math.max(16,Math.min(H-16,en.y));
+}
+
+function enemyFire(){
+  game.efire++;
+  if(game.efire<90)return;
+  game.efire=0;
+  const p=game.player;
+  game.enemies.forEach(en=>{
+    if(!en.alive)return;
+    if(dist(en,p)<160){
+      const ang=Math.atan2(p.y-en.y,p.x-en.x);
+      game.ebullets.push({x:en.x,y:en.y,vx:Math.cos(ang)*5,vy:Math.sin(ang)*5,life:60});
+    }
+  });
+}
+
+function update(){
+  if(game.over)return;
+  game.tick++;
+  const p=game.player;
+  if(p.moving){
+    const d=dist(p,{x:p.tx,y:p.ty});
+    if(d<p.speed){p.x=p.tx;p.y=p.ty;p.moving=false;}
+    else{const ang=Math.atan2(p.ty-p.y,p.tx-p.x);p.angle=ang;p.x+=Math.cos(ang)*p.speed;p.y+=Math.sin(ang)*p.speed;}
+    p.x=Math.max(14,Math.min(W-14,p.x));p.y=Math.max(14,Math.min(H-14,p.y));
+  }
+  game.enemies.forEach(en=>enemyAI(en));
+  enemyFire();
+
+  game.bullets=game.bullets.filter(b=>{
+    b.x+=b.vx;b.y+=b.vy;b.life--;
+    if(b.x<0||b.x>W||b.y<0||b.y>H||b.life<=0)return false;
+    let hit=false;
+    game.enemies.forEach(en=>{
+      if(!en.alive)return;
+      if(dist(b,en)<14){
+        en.hp--;spawnParticles(en.x,en.y,'#ff6644',8);
+        if(en.hp<=0){en.alive=false;game.sunk++;spawnParticles(en.x,en.y,'#ffcc44',20);log('Enemy ship sunk!');updateHUD();}
+        hit=true;
+      }
+    });
+    return !hit;
+  });
+
+  game.ebullets=game.ebullets.filter(b=>{
+    b.x+=b.vx;b.y+=b.vy;b.life--;
+    if(b.x<0||b.x>W||b.y<0||b.y>H||b.life<=0)return false;
+    if(dist(b,p)<14){
+      p.hp--;spawnParticles(p.x,p.y,'#ff4444',6);updateHUD();
+      if(p.hp<=0){game.over=true;game.overMsg='DEFEATED! Your ship was sunk.';}
+      return false;
+    }
+    return true;
+  });
+
+  game.particles=game.particles.filter(pt=>{pt.x+=pt.vx;pt.y+=pt.vy;pt.life--;return pt.life>0;});
+  checkCapture();
+  if(game.enemies.every(e=>!e.alive)&&!game.islands.every(i=>i.owner==='player')){
+    if(!game._hint){game._hint=true;log('All enemies sunk! Capture remaining islands.');}
+  }
+}
+
+function drawShip(x,y,angle,color,size){
+  ctx.save();ctx.translate(x,y);ctx.rotate(angle+Math.PI/2);
+  ctx.beginPath();ctx.moveTo(0,-size*1.4);ctx.lineTo(size*0.6,size*0.8);ctx.lineTo(-size*0.6,size*0.8);ctx.closePath();
+  ctx.fillStyle=color;ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.25)';ctx.lineWidth=1;ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-size*0.3);ctx.lineTo(0,-size*1.3);
+  ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=1.5;ctx.stroke();
+  ctx.restore();
+}
+
+function drawIsland(isl){
+  const colors={neutral:'#c4943a',player:'#4a8aff',enemy:'#e05030'};
+  ctx.beginPath();ctx.arc(isl.x,isl.y,isl.r,0,Math.PI*2);
+  ctx.fillStyle=colors[isl.owner]||'#c4943a';ctx.fill();
+  ctx.beginPath();ctx.arc(isl.x,isl.y,isl.r*0.65,0,Math.PI*2);
+  ctx.fillStyle='#5a9a40';ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(isl.x,isl.y,isl.r,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,0.85)';ctx.font='bold 10px sans-serif';ctx.textAlign='center';
+  ctx.fillText(isl.name,isl.x,isl.y+isl.r+13);
+}
+
+function drawWaves(){
+  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=1;
+  const t=game.tick*0.5;
+  for(let i=0;i<8;i++){
+    const y=55*i+((t*0.3)%55);
+    ctx.beginPath();
+    for(let x=0;x<=W;x+=40){const yy=y+Math.sin((x+t*1.5)/60)*4;x===0?ctx.moveTo(x,yy):ctx.lineTo(x,yy);}
+    ctx.stroke();
+  }
+}
+
+function drawGrid(){
+  ctx.strokeStyle='rgba(255,255,255,0.025)';ctx.lineWidth=0.5;
+  for(let x=0;x<W;x+=55){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=55){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0d2a4a';ctx.fillRect(0,0,W,H);
+  drawGrid();drawWaves();
+  game.islands.forEach(drawIsland);
+
+  game.particles.forEach(pt=>{
+    ctx.beginPath();ctx.arc(pt.x,pt.y,2,0,Math.PI*2);
+    ctx.fillStyle=pt.color;ctx.globalAlpha=pt.life/20;ctx.fill();ctx.globalAlpha=1;
+  });
+
+  game.bullets.forEach(b=>{ctx.beginPath();ctx.arc(b.x,b.y,3.5,0,Math.PI*2);ctx.fillStyle='#ffdd66';ctx.fill();});
+  game.ebullets.forEach(b=>{ctx.beginPath();ctx.arc(b.x,b.y,3,0,Math.PI*2);ctx.fillStyle='#ff6666';ctx.fill();});
+
+  game.enemies.forEach(en=>{
+    if(!en.alive)return;
+    drawShip(en.x,en.y,en.angle,'#c04444',10);
+    ctx.fillStyle='rgba(255,100,100,0.9)';ctx.font='bold 10px sans-serif';ctx.textAlign='center';
+    ctx.fillText('HP:'+en.hp,en.x,en.y-18);
+  });
+
+  if(mode==='fire'){
+    const p=game.player;
+    ctx.beginPath();ctx.arc(p.x,p.y,160,0,Math.PI*2);
+    ctx.strokeStyle='rgba(255,200,80,0.15)';ctx.setLineDash([4,6]);ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);
+  }
+
+  drawShip(game.player.x,game.player.y,game.player.angle,'#4aaa4a',12);
+
+  if(game.player.moving){
+    ctx.beginPath();ctx.setLineDash([4,5]);
+    ctx.moveTo(game.player.x,game.player.y);ctx.lineTo(game.player.tx,game.player.ty);
+    ctx.strokeStyle='rgba(80,200,80,0.3)';ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);
+    ctx.beginPath();ctx.arc(game.player.tx,game.player.ty,5,0,Math.PI*2);
+    ctx.fillStyle='rgba(80,200,80,0.5)';ctx.fill();
+  }
+
+  if(game.over){
+    ctx.fillStyle='rgba(10,22,40,0.82)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#80cfff';ctx.font='bold 28px sans-serif';ctx.textAlign='center';
+    ctx.fillText(game.overMsg,W/2,H/2-16);
+    ctx.fillStyle='#4a8aaa';ctx.font='15px sans-serif';
+    ctx.fillText('Click "New Game" to play again',W/2,H/2+20);
+  }
+}
+
+function loop(){update();draw();requestAnimationFrame(loop);}
+function restartGame(){initGame();}
+
+initGame();loop();
+</script>
+</body>
+</html>
